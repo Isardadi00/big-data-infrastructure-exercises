@@ -1,6 +1,9 @@
 import os
 from typing import Annotated
 
+import polars as pl
+import requests
+from bs4 import BeautifulSoup
 from fastapi import APIRouter, status
 from fastapi.params import Query
 
@@ -50,7 +53,26 @@ def download_data(
     """
     download_dir = os.path.join(settings.raw_dir, "day=20231101")
     base_url = settings.source_url + "/2023/11/01/"
-    # TODO Implement download
+
+    if os.path.exists(download_dir):
+        for file in os.listdir(download_dir):
+            os.remove(os.path.join(download_dir, file))
+    os.makedirs(download_dir, exist_ok=True)
+
+    response = requests.get(base_url)
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    import concurrent.futures
+
+    file_links = [a['href'] for a in soup.find_all("a") if a["href"].endswith(".json.gz")][:file_limit]
+
+    def download_file(file):
+        response = requests.get(base_url + file)
+        with open(os.path.join(download_dir, file), "wb") as f:
+            f.write(response.content)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(download_file, file_links)
 
     return "OK"
 
@@ -75,6 +97,19 @@ def prepare_data() -> str:
     Keep in mind that we are downloading a lot of small files, and some libraries might not work well with this!
     """
     # TODO
+    raw_dir = os.path.join(settings.raw_dir, "day=20231101")
+    prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
+
+    if os.path.exists(prepared_dir):
+        for file in os.listdir(prepared_dir):
+            os.remove(os.path.join(prepared_dir, file))
+
+    os.makedirs(prepared_dir, exist_ok=True)
+
+    for file in os.listdir(raw_dir):
+        df = pl.read_json(os.path.join(raw_dir, file))
+        print(df.head(10))
+
     return "OK"
 
 
