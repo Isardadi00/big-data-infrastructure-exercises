@@ -1,8 +1,11 @@
+import time
+import json
 import os
 from typing import Annotated
 
-import polars as pl
 import requests
+import concurrent.futures
+import pandas as pd
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, status
 from fastapi.params import Query
@@ -62,14 +65,14 @@ def download_data(
     response = requests.get(base_url)
 
     soup = BeautifulSoup(response.text, "html.parser")
-    import concurrent.futures
 
     file_links = [a['href'] for a in soup.find_all("a") if a["href"].endswith(".json.gz")][:file_limit]
 
     def download_file(file):
         response = requests.get(base_url + file)
-        with open(os.path.join(download_dir, file), "wb") as f:
+        with open(os.path.join(download_dir, file[:-3]), "wb") as f:
             f.write(response.content)
+
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         executor.map(download_file, file_links)
@@ -97,6 +100,7 @@ def prepare_data() -> str:
     Keep in mind that we are downloading a lot of small files, and some libraries might not work well with this!
     """
     # TODO
+
     raw_dir = os.path.join(settings.raw_dir, "day=20231101")
     prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
 
@@ -106,9 +110,26 @@ def prepare_data() -> str:
 
     os.makedirs(prepared_dir, exist_ok=True)
 
-    for file in os.listdir(raw_dir):
-        df = pl.read_json(os.path.join(raw_dir, file))
-        print(df.head(10))
+    files = os.listdir(raw_dir)
+
+    def prepare_file(file, raw_dir, prepared_dir):
+        file_path = os.path.join(raw_dir, file)
+        with open(file_path, "rt") as f:
+            data = json.load(f)
+        if 'aircraft' in data:
+            timestamp = data['now']
+            df = pd.DataFrame(data['aircraft'])
+            df = df[['hex', 'r', 't', 'lat', 'lon', 'alt_baro', 'gs', 'emergency']]
+            df['timestamp'] = timestamp
+            df.columns = ['icao', 'registration', 'type', 'lat', 'lon', 'max_altitude_baro', 'max_ground_speed', 'had_emergency', 'timestamp']
+            df['had_emergency'] = df['had_emergency'].apply(lambda x: True if x in ['general', 'lifeguard', 'minfuel', 'nordo', 'unlawful', 'downed', 'reserved'] else False)
+            df = df[~df['icao'].str.startswith('~')]
+            df.to_csv(os.path.join(prepared_dir, file.replace(".json", ".csv")), index=False)
+        else:
+            print(f"File {file} does not have aircraft data")
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(lambda file: prepare_file(file, raw_dir, prepared_dir), files)
 
     return "OK"
 
@@ -118,7 +139,7 @@ def list_aircraft(num_results: int = 100, page: int = 0) -> list[dict]:
     """List all the available aircraft, its registration and type ordered by
     icao asc
     """
-    # TODO
+    # TODO implement and return a list with dictionaries with those values.
     return [{"icao": "0d8300", "registration": "YV3382", "type": "LJ31"}]
 
 
