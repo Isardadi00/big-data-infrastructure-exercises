@@ -1,3 +1,6 @@
+import time
+
+import coverage
 from fastapi.testclient import TestClient
 
 
@@ -11,12 +14,60 @@ class TestS1Student:
     For more information on the library used, search `pytest` in your preferred search engine.
     """
 
-    def test_first(self, client: TestClient) -> None:
-        # Implement tests if you want
+    def test_unit_download(self, client: TestClient, file_limit: int = 1) -> None:
         with client as client:
-            response = client.post("/api/s1/aircraft/download?file_limit=1")
-            assert True
+            response = client.post(f"/api/s1/aircraft/download?file_limit={file_limit}")
+            assert response.status_code == 200
+            assert response.json() == "OK"
 
+    def test_unit_prepare(self, client: TestClient) -> None:
+        with client as client:
+            response = client.post("/api/s1/aircraft/prepare")
+            assert response.status_code == 200
+            assert response.json() == "OK"
+
+    def test_unit_aircraft(self, client: TestClient) -> None:
+        with client as client:
+            response = client.get("/api/s1/aircraft")
+            assert response.status_code == 200
+            assert isinstance(response.json(), list)
+
+    def test_unit_positions(self, client: TestClient) -> None:
+        icao = "06a0af"
+        with client as client:
+            response = client.get(f"/api/s1/aircraft/{icao}/positions")
+            assert response.status_code == 200
+            assert isinstance(response.json(), list)
+
+    def test_unit_stats(self, client: TestClient) -> None:
+        icao = "06a0af"
+        with client as client:
+            response = client.get(f"/api/s1/aircraft/{icao}/stats")
+            assert response.status_code == 200
+            assert isinstance(response.json(), dict)
+
+    def test_integration(self, client: TestClient) -> None:
+        self.test_unit_download(client)
+        self.test_unit_prepare(client)
+        self.test_unit_aircraft(client)
+        self.test_unit_positions(client)
+        self.test_unit_stats(client)
+
+    def test_stress(self, client: TestClient) -> None:
+        with client as client:
+            time_start = time.time()
+            self.test_unit_download(client, file_limit=1000)
+            self.test_unit_prepare(client)
+            time_end = time.time() - time_start
+            assert time_end < 300
+
+    def test_coverage(self, client: TestClient) -> None:
+        cov = coverage.Coverage()
+        cov.start()
+        self.test_integration(client)
+        cov.stop()
+        cov.save()
+        cov.report()
 
 class TestItCanBeEvaluated:
     """

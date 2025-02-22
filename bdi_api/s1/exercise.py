@@ -1,11 +1,14 @@
-import time
-import json
+import concurrent.futures
 import os
+import time
 from typing import Annotated
 
-import requests
-import concurrent.futures
+import duckdb as db
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+import requests
+import ujson
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, status
 from fastapi.params import Query
@@ -23,6 +26,7 @@ s1 = APIRouter(
     tags=["s1"],
 )
 
+pd.set_option('future.no_silent_downcasting', True)
 
 @s1.post("/aircraft/download")
 def download_data(
@@ -54,6 +58,7 @@ def download_data(
 
     TIP: always clean the download folder before writing again to avoid having old files.
     """
+    time_start = time.time()
     download_dir = os.path.join(settings.raw_dir, "day=20231101")
     base_url = settings.source_url + "/2023/11/01/"
 
@@ -73,11 +78,42 @@ def download_data(
         with open(os.path.join(download_dir, file[:-3]), "wb") as f:
             f.write(response.content)
 
-
     with concurrent.futures.ThreadPoolExecutor() as executor:
         executor.map(download_file, file_links)
 
+    time_end = time.time() - time_start
+    print(f"Time to download: {time_end}")
     return "OK"
+
+# multiprocessing can only serialize top-module level functions which
+# requires the function to be 'pickleable' so it can be passed to the child processes
+# this is why the function is defined outside the route
+def prepare_file(file):
+        file_path = os.path.join(settings.raw_dir, "day=20231101", file)
+        with open(file_path) as f:
+            data = ujson.load(f)
+
+        if 'aircraft' in data:
+            timestamp = data['now']
+            df = pd.DataFrame(data['aircraft'])
+            df_new = pd.DataFrame()
+            emergency_values = ['general', 'lifeguard', 'minfuel', 'nordo', 'unlawful', 'downed', 'reserved']
+            df_new['altitude_baro'] = df['alt_baro'].replace({'ground': 0})
+            df_new['had_emergency'] = df['emergency'].isin(emergency_values)
+
+            df_new['icao'] = df.get('hex', None)
+            df_new['registration'] = df.get('r', None)
+            df_new['type'] = df.get('t', None)
+            df_new['lat'] = df.get('lat', None)
+            df_new['lon'] = df.get('lon', None)
+            df_new['ground_speed'] = df.get('gs', None)
+            df_new['timestamp'] = timestamp
+
+
+        else:
+            print(f"File {file} does not have aircraft data")
+
+        return df_new
 
 
 @s1.post("/aircraft/prepare")
@@ -99,37 +135,35 @@ def prepare_data() -> str:
 
     Keep in mind that we are downloading a lot of small files, and some libraries might not work well with this!
     """
-    # TODO
+    time.start = time.time()
 
     raw_dir = os.path.join(settings.raw_dir, "day=20231101")
     prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
+    prepare_file_path = os.path.join(prepared_dir, 'aircraft_data.parquet')
+
 
     if os.path.exists(prepared_dir):
         for file in os.listdir(prepared_dir):
             os.remove(os.path.join(prepared_dir, file))
-
     os.makedirs(prepared_dir, exist_ok=True)
 
     files = os.listdir(raw_dir)
 
-    def prepare_file(file, raw_dir, prepared_dir):
-        file_path = os.path.join(raw_dir, file)
-        with open(file_path, "rt") as f:
-            data = json.load(f)
-        if 'aircraft' in data:
-            timestamp = data['now']
-            df = pd.DataFrame(data['aircraft'])
-            df = df[['hex', 'r', 't', 'lat', 'lon', 'alt_baro', 'gs', 'emergency']]
-            df['timestamp'] = timestamp
-            df.columns = ['icao', 'registration', 'type', 'lat', 'lon', 'max_altitude_baro', 'max_ground_speed', 'had_emergency', 'timestamp']
-            df['had_emergency'] = df['had_emergency'].apply(lambda x: True if x in ['general', 'lifeguard', 'minfuel', 'nordo', 'unlawful', 'downed', 'reserved'] else False)
-            df = df[~df['icao'].str.startswith('~')]
-            df.to_csv(os.path.join(prepared_dir, file.replace(".json", ".csv")), index=False)
-        else:
-            print(f"File {file} does not have aircraft data")
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        results = executor.map(prepare_file, files)
+        time_end = time.time() - time.start
+        print(f"Time to prepare files: {time_end}")
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        executor.map(lambda file: prepare_file(file, raw_dir, prepared_dir), files)
+        tables = [pa.Table.from_pandas(result) for result in results]
+        schema = tables[0].schema
+        tables = [table.cast(schema) for table in tables]
+        table = pa.concat_tables(tables)
+        pq.write_table(table, prepare_file_path)
+        time_end = time.time() - time.start
+        print(f"Time to write table: {time_end}")
+
+    time_end = time.time() - time.start
+    print(f"Time to compute endpoint: {time_end}")
 
     return "OK"
 
@@ -139,8 +173,23 @@ def list_aircraft(num_results: int = 100, page: int = 0) -> list[dict]:
     """List all the available aircraft, its registration and type ordered by
     icao asc
     """
-    # TODO implement and return a list with dictionaries with those values.
-    return [{"icao": "0d8300", "registration": "YV3382", "type": "LJ31"}]
+    time_start = time.time()
+    prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
+    prepare_file_path = 'aircraft_data.parquet'
+
+    result = db.query(
+        f"""SELECT DISTINCT icao,
+            registration,
+            type FROM '{os.path.join(prepared_dir, prepare_file_path)}'
+            ORDER BY icao ASC LIMIT {num_results}
+            OFFSET {page * num_results}"""
+    ).df()
+
+    time_end = time.time() - time_start
+    print(f"Time to get aircraft: {time_end}")
+    return result.to_dict(orient='records')
+
+    #return [{"icao": "0d8300", "registration": "YV3382", "type": "LJ31"}]
 
 
 @s1.get("/aircraft/{icao}/positions")
@@ -148,8 +197,26 @@ def get_aircraft_position(icao: str, num_results: int = 1000, page: int = 0) -> 
     """Returns all the known positions of an aircraft ordered by time (asc)
     If an aircraft is not found, return an empty list.
     """
-    # TODO implement and return a list with dictionaries with those values.
-    return [{"timestamp": 1609275898.6, "lat": 30.404617, "lon": -86.476566}]
+    time_start = time.time()
+    prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
+    prepare_file_path = 'aircraft_data.parquet'
+
+    result = db.query(
+        f"""SELECT timestamp,
+            lat,
+            lon FROM '{os.path.join(prepared_dir, prepare_file_path)}'
+            WHERE icao = '{icao}'
+            AND lat IS NOT NULL
+            AND lon IS NOT NULL
+            ORDER BY timestamp ASC LIMIT {num_results}
+            OFFSET {page * num_results}"""
+    ).df()
+
+    time_end = time.time() - time_start
+    print(f"Time to get positions: {time_end}")
+    return result.to_dict(orient='records')
+
+    #return [{"timestamp": 1609275898.6, "lat": 30.404617, "lon": -86.476566}]
 
 
 @s1.get("/aircraft/{icao}/stats")
@@ -160,5 +227,20 @@ def get_aircraft_statistics(icao: str) -> dict:
     * max_ground_speed
     * had_emergency
     """
-    # TODO Gather and return the correct statistics for the requested aircraft
-    return {"max_altitude_baro": 300000, "max_ground_speed": 493, "had_emergency": False}
+    time_start = time.time()
+    prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
+    prepare_file_path = 'aircraft_data.parquet'
+
+    result =db.query(
+        f"""SELECT MAX(altitude_baro) as max_altitude_baro,
+            MAX(ground_speed) as max_ground_speed,
+            MAX(had_emergency) as had_emergency FROM '{os.path.join(prepared_dir, prepare_file_path)}'
+            WHERE icao = '{icao}'
+            """
+    ).df()
+
+    time_end = time.time() - time_start
+    print(f"Time to get stats: {time_end}")
+    return result.to_dict(orient='records')[0]
+
+    #return {"max_altitude_baro": 300000, "max_ground_speed": 493, "had_emergency": False}
