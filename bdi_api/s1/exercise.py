@@ -1,6 +1,5 @@
 import concurrent.futures
 import os
-import time
 from typing import Annotated
 
 import duckdb as db
@@ -80,7 +79,7 @@ def download_data(
     with concurrent.futures.ThreadPoolExecutor() as executor:
         executor.map(download_file, file_links)
 
-    
+
     return "OK"
 
 # multiprocessing can only serialize top-module level functions which
