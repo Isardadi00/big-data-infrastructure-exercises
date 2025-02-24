@@ -58,7 +58,6 @@ def download_data(
 
     TIP: always clean the download folder before writing again to avoid having old files.
     """
-    time_start = time.time()
     download_dir = os.path.join(settings.raw_dir, "day=20231101")
     base_url = settings.source_url + "/2023/11/01/"
 
@@ -81,8 +80,7 @@ def download_data(
     with concurrent.futures.ThreadPoolExecutor() as executor:
         executor.map(download_file, file_links)
 
-    time_end = time.time() - time_start
-    print(f"Time to download: {time_end}")
+    
     return "OK"
 
 # multiprocessing can only serialize top-module level functions which
@@ -135,7 +133,6 @@ def prepare_data() -> str:
 
     Keep in mind that we are downloading a lot of small files, and some libraries might not work well with this!
     """
-    time.start = time.time()
 
     raw_dir = os.path.join(settings.raw_dir, "day=20231101")
     prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
@@ -151,19 +148,12 @@ def prepare_data() -> str:
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
         results = executor.map(prepare_file, files)
-        time_end = time.time() - time.start
-        print(f"Time to prepare files: {time_end}")
 
         tables = [pa.Table.from_pandas(result) for result in results]
         schema = tables[0].schema
         tables = [table.cast(schema) for table in tables]
         table = pa.concat_tables(tables)
         pq.write_table(table, prepare_file_path)
-        time_end = time.time() - time.start
-        print(f"Time to write table: {time_end}")
-
-    time_end = time.time() - time.start
-    print(f"Time to compute endpoint: {time_end}")
 
     return "OK"
 
@@ -173,7 +163,6 @@ def list_aircraft(num_results: int = 100, page: int = 0) -> list[dict]:
     """List all the available aircraft, its registration and type ordered by
     icao asc
     """
-    time_start = time.time()
     prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
     prepare_file_path = 'aircraft_data.parquet'
 
@@ -185,8 +174,6 @@ def list_aircraft(num_results: int = 100, page: int = 0) -> list[dict]:
             OFFSET {page * num_results}"""
     ).df()
 
-    time_end = time.time() - time_start
-    print(f"Time to get aircraft: {time_end}")
     return result.to_dict(orient='records')
 
     #return [{"icao": "0d8300", "registration": "YV3382", "type": "LJ31"}]
@@ -197,7 +184,6 @@ def get_aircraft_position(icao: str, num_results: int = 1000, page: int = 0) -> 
     """Returns all the known positions of an aircraft ordered by time (asc)
     If an aircraft is not found, return an empty list.
     """
-    time_start = time.time()
     prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
     prepare_file_path = 'aircraft_data.parquet'
 
@@ -212,8 +198,6 @@ def get_aircraft_position(icao: str, num_results: int = 1000, page: int = 0) -> 
             OFFSET {page * num_results}"""
     ).df()
 
-    time_end = time.time() - time_start
-    print(f"Time to get positions: {time_end}")
     return result.to_dict(orient='records')
 
     #return [{"timestamp": 1609275898.6, "lat": 30.404617, "lon": -86.476566}]
@@ -227,7 +211,6 @@ def get_aircraft_statistics(icao: str) -> dict:
     * max_ground_speed
     * had_emergency
     """
-    time_start = time.time()
     prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
     prepare_file_path = 'aircraft_data.parquet'
 
@@ -238,9 +221,6 @@ def get_aircraft_statistics(icao: str) -> dict:
             WHERE icao = '{icao}'
             """
     ).df()
-
-    time_end = time.time() - time_start
-    print(f"Time to get stats: {time_end}")
     return result.to_dict(orient='records')[0]
 
     #return {"max_altitude_baro": 300000, "max_ground_speed": 493, "had_emergency": False}
