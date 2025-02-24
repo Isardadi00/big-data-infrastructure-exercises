@@ -7,11 +7,11 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
-import ujson
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, status
 from fastapi.params import Query
 
+from bdi_api.s1.s1_funcs import S1
 from bdi_api.settings import Settings
 
 settings = Settings()
@@ -60,57 +60,16 @@ def download_data(
     download_dir = os.path.join(settings.raw_dir, "day=20231101")
     base_url = settings.source_url + "/2023/11/01/"
 
-    if os.path.exists(download_dir):
-        for file in os.listdir(download_dir):
-            os.remove(os.path.join(download_dir, file))
-    os.makedirs(download_dir, exist_ok=True)
-
+    S1.remove_and_create_dir(download_dir)
     response = requests.get(base_url)
-
     soup = BeautifulSoup(response.text, "html.parser")
 
     file_links = [a['href'] for a in soup.find_all("a") if a["href"].endswith(".json.gz")][:file_limit]
 
-    def download_file(file):
-        response = requests.get(base_url + file)
-        with open(os.path.join(download_dir, file[:-3]), "wb") as f:
-            f.write(response.content)
-
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        executor.map(download_file, file_links)
-
+        executor.map(lambda file: S1.download_file(base_url, download_dir, file), file_links)
 
     return "OK"
-
-# multiprocessing can only serialize top-module level functions which
-# requires the function to be 'pickleable' so it can be passed to the child processes
-# this is why the function is defined outside the route
-def prepare_file(file):
-        file_path = os.path.join(settings.raw_dir, "day=20231101", file)
-        with open(file_path) as f:
-            data = ujson.load(f)
-
-        if 'aircraft' in data:
-            timestamp = data['now']
-            df = pd.DataFrame(data['aircraft'])
-            df_new = pd.DataFrame()
-            emergency_values = ['general', 'lifeguard', 'minfuel', 'nordo', 'unlawful', 'downed', 'reserved']
-            df_new['altitude_baro'] = df['alt_baro'].replace({'ground': 0})
-            df_new['had_emergency'] = df['emergency'].isin(emergency_values)
-
-            df_new['icao'] = df.get('hex', None)
-            df_new['registration'] = df.get('r', None)
-            df_new['type'] = df.get('t', None)
-            df_new['lat'] = df.get('lat', None)
-            df_new['lon'] = df.get('lon', None)
-            df_new['ground_speed'] = df.get('gs', None)
-            df_new['timestamp'] = timestamp
-
-
-        else:
-            print(f"File {file} does not have aircraft data")
-
-        return df_new
 
 
 @s1.post("/aircraft/prepare")
@@ -137,16 +96,12 @@ def prepare_data() -> str:
     prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
     prepare_file_path = os.path.join(prepared_dir, 'aircraft_data.parquet')
 
-
-    if os.path.exists(prepared_dir):
-        for file in os.listdir(prepared_dir):
-            os.remove(os.path.join(prepared_dir, file))
-    os.makedirs(prepared_dir, exist_ok=True)
+    S1.remove_and_create_dir(prepared_dir)
 
     files = os.listdir(raw_dir)
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        results = executor.map(prepare_file, files)
+        results = executor.map(S1.prepare_file, files)
 
         tables = [pa.Table.from_pandas(result) for result in results]
         schema = tables[0].schema
