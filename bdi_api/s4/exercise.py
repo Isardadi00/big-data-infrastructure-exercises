@@ -1,11 +1,21 @@
+import concurrent
+import os
 from typing import Annotated
 
+import boto3
+import boto3.session
+import pyarrow as pa
+import pyarrow.parquet as pq
+import requests
+from bs4 import BeautifulSoup
 from fastapi import APIRouter, status
 from fastapi.params import Query
 
+from bdi_api.s4.s4_funcs import S4
 from bdi_api.settings import Settings
 
 settings = Settings()
+
 
 s4 = APIRouter(
     responses={
@@ -36,10 +46,24 @@ def download_data(
 
     NOTE: you can change that value via the environment variable `BDI_S3_BUCKET`
     """
+
     base_url = settings.source_url + "/2023/11/01/"
     s3_bucket = settings.s3_bucket
     s3_prefix_path = "raw/day=20231101/"
-    # TODO
+
+    response = requests.get(base_url)
+    soup = BeautifulSoup(response.text, "html.parser")
+    file_links = [a['href'] for a in soup.find_all("a") if a["href"].endswith(".json.gz")][:file_limit]
+
+    s3 = boto3.client('s3')
+
+    print(f"Downloading {len(file_links)} files to s3 bucket {s3_bucket} at path {s3_prefix_path}")
+
+    if S4.check_if_bucket_exists(s3, s3_bucket) is False:
+        s3.create_bucket(Bucket=s3_bucket)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(lambda file: S4.download_to_s3_bucket(base_url, s3, s3_bucket, s3_prefix_path, file), file_links)
 
     return "OK"
 
@@ -51,5 +75,30 @@ def prepare_data() -> str:
 
     All the `/api/s1/aircraft/` endpoints should work as usual
     """
-    # TODO
+
+    prepared_dir = os.path.join(settings.prepared_dir, "day=20231101")
+    prepare_file_path = os.path.join(prepared_dir, 'aircraft_data.parquet')
+    s3_bucket = settings.s3_bucket
+    s3_prefix_path = "raw/day=20231101/"
+
+    S4.remove_and_create_dir(prepared_dir)
+
+    s3 = boto3.client('s3')
+    response = s3.list_objects_v2(Bucket=s3_bucket, Prefix=s3_prefix_path)
+    s3_files = [obj['Key'] for obj in response['Contents']]
+    print(f"Found {len(s3_files)} files in s3 bucket {s3_bucket}")
+
+
+
+    s3_results = S4.process_files_in_batches_stream(s3_files, s3, s3_bucket, batch_size=100, max_workers=10)
+
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        results = executor.map(S4.prepare_file, s3_results)
+
+        tables = [pa.Table.from_pandas(result) for result in results]
+        schema = tables[0].schema
+        tables = [table.cast(schema) for table in tables]
+        table = pa.concat_tables(tables)
+        pq.write_table(table, prepare_file_path)
+
     return "OK"

@@ -38,3 +38,6 @@ archive.zip
 
 .report.json
 .pytest.json
+
+/terraform/**
+!/terraform/**/*.tf
