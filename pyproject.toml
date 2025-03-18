@@ -34,6 +34,7 @@ pandas = "^2.2.3"
 boto3 = "^1.36.25"
 pyarrow = "^19.0.1"
 ujson = "^5.10.0"
+psycopg = {extras = ["binary"], version = "^3.2.6"}
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.5.0"

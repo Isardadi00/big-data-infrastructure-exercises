@@ -24,6 +24,12 @@ class S4:
     def check_if_bucket_exists(s3_client, bucket_name):
         return any(bucket['Name'] == bucket_name for bucket in s3_client.list_buckets().get('Buckets', []))
 
+    def delete_from_s3_bucket(s3_resource, s3_bucket):
+        bucket = s3_resource.Bucket(s3_bucket)
+        bucket.objects.all().delete()
+        print(f"Deleted all files in bucket {s3_bucket}")
+
+    
     def download_to_s3_bucket(base_url, s3, s3_bucket, s3_prefix_path, file):
         response = requests.get(base_url + file)
         if response.status_code == 200:

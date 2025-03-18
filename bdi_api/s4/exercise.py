@@ -55,15 +55,21 @@ def download_data(
     soup = BeautifulSoup(response.text, "html.parser")
     file_links = [a['href'] for a in soup.find_all("a") if a["href"].endswith(".json.gz")][:file_limit]
 
-    s3 = boto3.client('s3')
+    s3_client = boto3.client('s3')
+    s3_resource = boto3.resource('s3')
 
     print(f"Downloading {len(file_links)} files to s3 bucket {s3_bucket} at path {s3_prefix_path}")
 
-    if S4.check_if_bucket_exists(s3, s3_bucket) is False:
-        s3.create_bucket(Bucket=s3_bucket)
+    if S4.check_if_bucket_exists(s3_client, s3_bucket) is False:
+        s3_client.create_bucket(Bucket=s3_bucket)
+    else: 
+        print(f"Bucket {s3_bucket} already exists")
+        S4.delete_from_s3_bucket(s3_resource, s3_bucket)
+        print(f"Deleting all files in bucket {s3_bucket}")
+
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        executor.map(lambda file: S4.download_to_s3_bucket(base_url, s3, s3_bucket, s3_prefix_path, file), file_links)
+        executor.map(lambda file: S4.download_to_s3_bucket(base_url, s3_client, s3_bucket, s3_prefix_path, file), file_links)
 
     return "OK"
 
