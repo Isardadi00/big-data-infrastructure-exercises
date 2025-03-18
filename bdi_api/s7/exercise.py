@@ -1,9 +1,12 @@
-import psycopg
+import functools
 import boto3
-import json
+import concurrent.futures
+from psycopg_pool import ConnectionPool
 from bdi_api.s7.s7_funcs import S7
 from fastapi import APIRouter, status
 from bdi_api.settings import DBCredentials, Settings
+
+
 
 settings = Settings()
 db_credentials = DBCredentials()
@@ -18,6 +21,18 @@ s7 = APIRouter(
     tags=["s7"],
 )
 
+pool = ConnectionPool(
+    conninfo=f"""
+        dbname=postgres
+        user={db_credentials.username}
+        password={db_credentials.password}
+        host={db_credentials.host}
+        port={db_credentials.port}
+    """,
+    max_size=20,
+    max_lifetime=600,
+    timeout=10
+)
 
 @s7.post("/aircraft/prepare")
 def prepare_data() -> str:
@@ -30,52 +45,36 @@ def prepare_data() -> str:
     bucket_name = settings.s3_bucket
     s3_prefix_path = "raw/day=20231101/"
 
-    conn = psycopg.connect(
-        dbname="postgres", 
-        user=db_credentials.username,
-        password=db_credentials.password,
-        host=db_credentials.host,
-        port=db_credentials.port,
-    )
-
-    cursor = conn.cursor()
-
     response = s3.list_objects_v2(Bucket=bucket_name, Prefix=s3_prefix_path)
     files = [content['Key'] for content in response.get('Contents')]
 
-    create_table_query = """
-        CREATE TABLE IF NOT EXISTS aircraft (
-            icao VARCHAR(7),
-            registration VARCHAR(10),
-            type VARCHAR(10),
-            lat FLOAT,
-            lon FLOAT,
-            ground_speed FLOAT,
-            altitude_baro FLOAT,
-            timestamp FLOAT,
-            had_emergency BOOLEAN
-        ) 
-        """
-    cursor.execute(create_table_query)
+    with pool.connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS aircraft (
+                    icao VARCHAR(7),
+                    registration VARCHAR(10),
+                    type VARCHAR(10),
+                    lat FLOAT,
+                    lon FLOAT,
+                    ground_speed FLOAT,
+                    altitude_baro FLOAT,
+                    timestamp FLOAT,
+                    had_emergency BOOLEAN
+                ) 
+                """
+            )
 
-    for file in files:
-        json_data = S7.retrieve_from_s3_bucket(s3, bucket_name, file)
-        df = S7.prepare_file(json_data)
-        df = df[['icao', 'registration', 'type', 'lat', 'lon', 'ground_speed', 'altitude_baro', 'timestamp', 'had_emergency']]
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_aircraft_icao ON aircraft (icao);
+            """)
 
-        print(df.columns)
-        print(df.head())
-
-        insert_query = """
-            INSERT INTO aircraft (icao, registration, type, lat, lon, ground_speed, altitude_baro, timestamp, had_emergency)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-
-        cursor.executemany(insert_query, df.values.tolist())
-        conn.commit()
-
-    cursor.close()
-    conn.close()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                executor.map(
+                functools.partial(S7.insert_data_into_database, s3, bucket_name, conn, cursor),
+                files
+            )
 
     return "OK"
 
@@ -87,26 +86,17 @@ def list_aircraft(num_results: int = 100, page: int = 0) -> list[dict]:
 
     Use credentials passed from `db_credentials`
     """
-    conn = psycopg.connect(
-        dbname="postgres", 
-        user=db_credentials.username,
-        password=db_credentials.password,
-        host=db_credentials.host,
-        port=db_credentials.port,
-    )
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        f"""SELECT DISTINCT icao,
-            registration,
-            type FROM aircraft
-            ORDER BY icao ASC LIMIT {num_results}
-            OFFSET {page * num_results}"""
-    )
-    result = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    
+    with pool.connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""SELECT DISTINCT icao,
+                    registration,
+                    type FROM aircraft
+                    ORDER BY icao ASC LIMIT {num_results}
+                    OFFSET {page * num_results}"""
+            )
+            result = cursor.fetchall()
 
     return [{"icao": row[0], "registration": row[1], "type": row[2]} for row in result]
 
@@ -118,30 +108,21 @@ def get_aircraft_position(icao: str, num_results: int = 1000, page: int = 0) -> 
 
     Use credentials passed from `db_credentials`
     """
-    conn = psycopg.connect(
-        dbname="postgres", 
-        user=db_credentials.username,
-        password=db_credentials.password,
-        host=db_credentials.host,
-        port=db_credentials.port,
-    )
+    
+    with pool.connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""SELECT timestamp,
+                    lat,
+                    lon FROM aircraft
+                    WHERE icao = '{icao}'
+                    AND lat IS NOT NULL
+                    AND lon IS NOT NULL
+                    ORDER BY timestamp ASC LIMIT {num_results}
+                    OFFSET {page * num_results}"""
+            )
 
-    cursor = conn.cursor()
-
-    cursor.execute(
-        f"""SELECT timestamp,
-            lat,
-            lon FROM aircraft
-            WHERE icao = '{icao}'
-            AND lat IS NOT NULL
-            AND lon IS NOT NULL
-            ORDER BY timestamp ASC LIMIT {num_results}
-            OFFSET {page * num_results}"""
-    )
-
-    result = cursor.fetchall()
-    cursor.close()
-    conn.close()
+            result = cursor.fetchall()
 
     return [{"timestamp": row[0], "lat": row[1], "lon": row[2]} for row in result]
 
@@ -159,27 +140,18 @@ def get_aircraft_statistics(icao: str) -> dict:
     Use credentials passed from `db_credentials`
     """
 
-    conn = psycopg.connect(
-        dbname="postgres",
-        user=db_credentials.username,
-        password=db_credentials.password,
-        host=db_credentials.host,
-        port=db_credentials.port,
-    )
-    cursor = conn.cursor()
+    with pool.connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT MAX(altitude_baro) AS max_altitude_baro,
+                    MAX(ground_speed) AS max_ground_speed,
+                    BOOL_OR(had_emergency) AS had_emergency
+                FROM aircraft
+                WHERE icao = %s
+            """, (icao,))
+            result = cursor.fetchone()
 
-    cursor.execute(
-        f"""SELECT MAX(altitude_baro) as max_altitude_baro,
-            MAX(ground_speed) as max_ground_speed,
-            BOOL_OR(had_emergency) as had_emergency FROM aircraft
-            WHERE icao = '{icao}'
-            """
-    )
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
-
-    if result is None:
+    if result.count(None) == 3:
         return {}
     return {
         "max_altitude_baro": result[0],

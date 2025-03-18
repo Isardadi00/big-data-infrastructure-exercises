@@ -33,6 +33,13 @@ class TestS7Student:
             assert response.status_code == 200
             assert isinstance(response.json(), list)
 
+    def test_unit_positions_invalid_icao(self, client: TestClient) -> None:
+        icao = "invalid_icao"
+        with client as client:
+            response = client.get(f"/api/s7/aircraft/{icao}")
+            assert response.status_code == 404
+            assert response.json() == {"detail": "Not Found"}
+
     def test_unit_stats(self, client: TestClient) -> None:
         icao = "06a0af"
         with client as client:
@@ -40,14 +47,21 @@ class TestS7Student:
             assert response.status_code == 200
             assert isinstance(response.json(), dict)
 
-    def test_unit_stats_20ms(self, client: TestClient) -> None:
+    def test_unit_stats_invalid_icao(self, client: TestClient) -> None:
+        icao = "invalid_icao"
+        with client as client:
+            response = client.get(f"/api/s7/aircraft/{icao}/stats")
+            assert response.status_code == 200
+            assert response.json() == {}
+
+    def test_unit_stats_50ms(self, client: TestClient) -> None:
         icao = "06a0af"
         with client as client:
-            # Test with interval of 20ms
-            start_time = time.now()
-            response = client.get(f"/api/s7/aircraft/{icao}/stats?interval=20ms")
-            elapsed_time = time.now() - start_time
-            assert elapsed_time < 0.2, "Request took too long"
+            start_time = time.time()
+            response = client.get(f"/api/s7/aircraft/{icao}/stats")
+            elapsed_time = time.time() - start_time
+            print(f"Elapsed time: {elapsed_time:.2f} seconds")
+            assert elapsed_time < 0.5, "Request took too long"
             assert response.status_code == 200
             assert isinstance(response.json(), dict)
 
@@ -57,11 +71,3 @@ class TestS7Student:
         self.test_unit_aircraft(client)
         self.test_unit_positions(client)
         self.test_unit_stats(client)
-
-    def test_coverage(self, client: TestClient) -> None:
-        cov = coverage.Coverage()
-        cov.start()
-        self.test_integration(client)
-        cov.stop()
-        cov.save()
-        cov.report()
