@@ -8,14 +8,12 @@ settings = Settings()
 pd.set_option('future.no_silent_downcasting', True)
 
 class S7:
-
     def retrieve_from_s3_bucket(s3, s3_bucket, file):
         obj = s3.get_object(Bucket=s3_bucket, Key=file)
 
         with obj['Body'] as file_stream:
             json_data = ujson.loads(file_stream.read())
 
-        print(f"Retrieved {file} from s3 bucket {s3_bucket}")
         return json_data
 
     def prepare_file(file):
@@ -40,19 +38,58 @@ class S7:
 
             return df_new
     
-    def insert_data_into_database(s3, bucket_name, conn, cursor, file):
+    def insert_data_into_database(s3, bucket_name, pool, file):
         json_data = S7.retrieve_from_s3_bucket(s3, bucket_name, file)
         df = S7.prepare_file(json_data)
         df = df[['icao', 'registration', 'type', 'lat', 'lon', 'ground_speed', 'altitude_baro', 'timestamp', 'had_emergency']]
 
-        print(df.head())
-
         insert_query = """
                 INSERT INTO aircraft (icao, registration, type, lat, lon, ground_speed, altitude_baro, timestamp, had_emergency)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (icao, timestamp) DO NOTHING
             """
+        
+        with pool.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(insert_query, df.values.tolist())
+                conn.commit()
 
-        cursor.executemany(insert_query, df.values.tolist())
-        conn.commit()
+
+    def create_aircraft_table(pool):
+        with pool.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS aircraft (
+                        icao VARCHAR(7),
+                        registration VARCHAR(10),
+                        type VARCHAR(10),
+                        lat FLOAT,
+                        lon FLOAT,
+                        ground_speed FLOAT,
+                        altitude_baro FLOAT,
+                        timestamp FLOAT,
+                        had_emergency BOOLEAN
+                    ) 
+                    """
+                )
+                conn.commit()
+
+    def create_aircraft_stats_view(pool):
+        with pool.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    CREATE MATERIALIZED VIEW IF NOT EXISTS aircraft_stats AS
+                        SELECT icao,
+                        MAX(altitude_baro) AS max_altitude_baro,
+                        MAX(ground_speed) AS max_ground_speed,
+                        BOOL_OR(had_emergency) AS had_emergency
+                        FROM aircraft
+                        GROUP BY icao
+                """)
+                conn.commit()
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_aircraft_icao ON aircraft_stats (icao);
+                """)
+                conn.commit()
 

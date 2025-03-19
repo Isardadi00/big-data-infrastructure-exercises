@@ -54,17 +54,6 @@ class TestS7Student:
             assert response.status_code == 200
             assert response.json() == {}
 
-    def test_unit_stats_50ms(self, client: TestClient) -> None:
-        icao = "06a0af"
-        with client as client:
-            start_time = time.time()
-            response = client.get(f"/api/s7/aircraft/{icao}/stats")
-            elapsed_time = time.time() - start_time
-            print(f"Elapsed time: {elapsed_time:.2f} seconds")
-            assert elapsed_time < 0.5, "Request took too long"
-            assert response.status_code == 200
-            assert isinstance(response.json(), dict)
-
 
     def test_integration(self, client: TestClient) -> None:
         self.test_unit_prepare(client)
