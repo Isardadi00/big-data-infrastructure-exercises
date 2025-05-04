@@ -1,0 +1,9 @@
+#apache-airflow==2.8.0
+#apache-airflow-providers-amazon==8.14.0
+#apache-airflow-providers-http
+#apache-airflow-providers-postgres
+beautifulsoup4
+boto3
+requests
+psycopg[binary]
+psycopg-pool
