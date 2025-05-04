@@ -37,17 +37,19 @@ class S7:
                 print(f"File {file} does not have aircraft data")
 
             return df_new
-    
+
     def insert_data_into_database(s3, bucket_name, pool, file):
         json_data = S7.retrieve_from_s3_bucket(s3, bucket_name, file)
         df = S7.prepare_file(json_data)
-        df = df[['icao', 'registration', 'type', 'lat', 'lon', 'ground_speed', 'altitude_baro', 'timestamp', 'had_emergency']]
+        df = df[['icao', 'registration', 'type', 'lat', 'lon',
+                 'ground_speed', 'altitude_baro', 'timestamp', 'had_emergency']]
 
         insert_query = """
-                INSERT INTO aircraft (icao, registration, type, lat, lon, ground_speed, altitude_baro, timestamp, had_emergency)
+                INSERT INTO aircraft (icao, registration, type, lat, lon,
+                ground_speed, altitude_baro, timestamp, had_emergency)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
-        
+
         with pool.connection() as conn:
             with conn.cursor() as cursor:
                 cursor.executemany(insert_query, df.values.tolist())
@@ -69,7 +71,7 @@ class S7:
                         altitude_baro FLOAT,
                         timestamp FLOAT,
                         had_emergency BOOLEAN
-                    ) 
+                    )
                     """
                 )
                 conn.commit()

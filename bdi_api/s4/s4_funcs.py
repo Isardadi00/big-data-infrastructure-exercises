@@ -29,7 +29,7 @@ class S4:
         bucket.objects.all().delete()
         print(f"Deleted all files in bucket {s3_bucket}")
 
-    
+
     def download_to_s3_bucket(base_url, s3, s3_bucket, s3_prefix_path, file):
         response = requests.get(base_url + file)
         if response.status_code == 200:

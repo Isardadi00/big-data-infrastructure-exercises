@@ -1,13 +1,14 @@
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from datetime import datetime
-from psycopg_pool import ConnectionPool
-import logging
-import os
-import boto3
-import requests
 import gzip
 import json
+import logging
+import os
+from datetime import datetime
+
+import boto3
+import requests
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from psycopg_pool import ConnectionPool
 
 # Config
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ pool = ConnectionPool(
         port={str(db_credentials['port'])}
     """,
     max_size=20,
-    max_lifetime=600,   
+    max_lifetime=600,
     timeout=20
 )
 
@@ -38,7 +39,7 @@ def upload_aircraft_data_to_s3():
     if not S3_BUCKET:
         logger.error("S3_BUCKET environment variable is not set.")
         raise ValueError("S3_BUCKET environment variable is not set.")
-    
+
     s3_prefix = "basic-ac-data/"
     logger.info(f"Downloading from: {SOURCE_URL}")
 
@@ -84,7 +85,7 @@ def upload_aircraft_data_to_s3():
     except Exception as e:
         logger.exception(f"Failed to download from {SOURCE_URL}, status code: {response.status_code}, error: {e}")
         raise
-    
+
 def insert_aircraft_data_to_RDS():
     logger.info(f"DB credentials: {db_credentials}")
     logger.info(f"S3 bucket: {S3_BUCKET}")
@@ -93,7 +94,7 @@ def insert_aircraft_data_to_RDS():
     s3_prefix = "basic-ac-data/basic-ac-db.json"
     s3_href = f"s3://{s3_bucket}/{s3_prefix}"
     logger.info(f"Inserting into RDS with data from: {s3_href}")
- 
+
     # Load the JSON data from S3
     s3_client = boto3.client("s3")
 
@@ -105,7 +106,7 @@ def insert_aircraft_data_to_RDS():
 
     data = json.loads(response["Body"].read().decode("utf-8"))
 
-    logger.info(f"Loaded {len(data)} records from S3") 
+    logger.info(f"Loaded {len(data)} records from S3")
     try:
         logger.info("Inserting data into PostgreSQL database...")
         if not data:
@@ -153,12 +154,12 @@ def insert_aircraft_data_to_RDS():
         logger.error(f"Error uploading data from S3 to RDS: {e}")
         return
 
-    
+
 
 with DAG(
     dag_id="download_aircraft_db_ndjson",
     start_date=datetime(2025, 4, 15),
-    schedule_interval="@once", 
+    schedule_interval="@once",
     catchup=True,
     description="Download and extract the aircraft database from ADS-B Exchange (NDJSON)",
     tags=["aircraft", "database"],

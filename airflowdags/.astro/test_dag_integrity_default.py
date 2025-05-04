@@ -1,13 +1,12 @@
 """Test the validity of all DAGs. **USED BY DEV PARSE COMMAND DO NOT EDIT**"""
 
-from contextlib import contextmanager
 import logging
 import os
+from contextlib import contextmanager
 
 import pytest
-
-from airflow.models import DagBag, Variable, Connection
 from airflow.hooks.base import BaseHook
+from airflow.models import Connection, DagBag, Variable
 from airflow.utils.db import initdb
 
 # init airflow database
@@ -130,7 +129,7 @@ def get_import_errors():
 def test_file_imports(rel_path, rv):
     """Test for import errors on a file"""
     if os.path.exists(".astro/dag_integrity_exceptions.txt"):
-        with open(".astro/dag_integrity_exceptions.txt", "r") as f:
+        with open(".astro/dag_integrity_exceptions.txt") as f:
             exceptions = f.readlines()
     print(f"Exceptions: {exceptions}")
     if (rv != "No import errors") and rel_path not in exceptions:

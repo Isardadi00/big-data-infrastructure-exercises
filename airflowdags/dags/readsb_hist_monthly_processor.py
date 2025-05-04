@@ -1,18 +1,17 @@
-import pandas as pd
-from psycopg_pool import ConnectionPool
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.operators.empty import EmptyOperator
-from datetime import datetime, timedelta
-from bs4 import BeautifulSoup
-from pathlib import Path
+import gzip
+import io
+import json
 import logging
 import os
-import io
-import gzip
-import json
+from datetime import datetime
+
 import boto3
+import pandas as pd
 import requests
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from bs4 import BeautifulSoup
+from psycopg_pool import ConnectionPool
 
 S3_BUCKET = os.getenv("S3_BUCKET")
 S3_URL = os.getenv("S3_URL")
@@ -37,7 +36,7 @@ pool = ConnectionPool(
         port={str(db_credentials['port'])}
     """,
     max_size=20,
-    max_lifetime=600,   
+    max_lifetime=600,
     timeout=20
 )
 
@@ -65,7 +64,7 @@ def download_data(ds, **_):
     # Check for existing files in S3
     existing = s3.list_objects_v2(Bucket=s3_bucket, Prefix=s3_prefix)
     # If there are already 100+ files, skip downloading
-    if existing.get("KeyCount", 0) >= 100: 
+    if existing.get("KeyCount", 0) >= 100:
         logger.info(f"{s3_prefix} already has >= 100 files. Skipping download.")
         return
 
@@ -89,7 +88,7 @@ def prepare_data(ds, **_):
     s3_bucket = S3_BUCKET
     s3_prefix_raw = f"raw/{date_s3}"
     s3_prefix_prepared = f"prepared/{date_s3}/"
-    
+
     # Create local directory for the day to store files in memory
     local_day_dir = os.path.join("/usr/local/airflow/data", f"day={date_s3}")
     os.makedirs(local_day_dir, exist_ok=True)
@@ -130,7 +129,7 @@ def prepare_data(ds, **_):
         except Exception as e:
             logger.error(f"Error processing {s3_key}: {e}")
 
-    
+
 def insert_aircraft_data_to_RDS(ds, **_):
     date_s3 = datetime.strptime(ds, "%Y-%m-%d").strftime("%Y/%m/%d")
     s3_bucket = S3_BUCKET

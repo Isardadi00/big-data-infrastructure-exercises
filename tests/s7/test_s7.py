@@ -1,6 +1,4 @@
 
-import time
-import coverage
 from fastapi.testclient import TestClient
 
 

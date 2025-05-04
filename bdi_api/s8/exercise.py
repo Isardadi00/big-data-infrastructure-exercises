@@ -1,12 +1,10 @@
 from typing import Optional
 
-import boto3
 from fastapi import APIRouter, status
+from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 from bdi_api.settings import DBCredentials, Settings
-from bdi_api.s8.s8_funcs import S8
-from psycopg_pool import ConnectionPool
 
 settings = Settings()
 db_credentials = DBCredentials()
@@ -61,9 +59,6 @@ def list_aircraft(num_results: int = 100, page: int = 0) -> list[AircraftReturn]
     IMPORTANT: Only return the aircraft that we have seen and not the entire list in the aircrafts database
 
     """
-    
-    s3 = boto3.client('s3')
-    bucket_name = settings.s3_bucket
 
     # TODO
     return [
@@ -117,8 +112,5 @@ def get_aircraft_co2(icao: str, day: str) -> AircraftCO2:
     If you don't have the fuel consumption rate, return `None` in the `co2` field
     ```
     """
-    s3 = boto3.client('s3')
-    bucket_name = settings.s3_bucket
-    s3_prefix_path = f"raw/day={day}/"
 
     return AircraftCO2(icao=icao, hours_flown=12.2, co2=1.5)

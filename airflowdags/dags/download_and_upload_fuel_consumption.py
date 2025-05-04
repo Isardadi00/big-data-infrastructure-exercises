@@ -1,9 +1,10 @@
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta
 import os
+from datetime import datetime
+
 import boto3
 import requests
+from airflow import DAG
+from airflow.operators.python import PythonOperator
 from botocore.exceptions import ClientError
 
 # Constants
@@ -47,4 +48,4 @@ with DAG(
         dag=dag,
     )
 
-    upload_to_s3
+    upload_to_s3 >> None  # No downstream tasks, just a single task, fixing for ruff

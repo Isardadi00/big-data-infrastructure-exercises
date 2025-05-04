@@ -1,12 +1,12 @@
-import functools
-import boto3
 import concurrent.futures
-import os
-from psycopg_pool import ConnectionPool
-from bdi_api.s7.s7_funcs import S7
-from fastapi import APIRouter, status
-from bdi_api.settings import DBCredentials, Settings
+import functools
 
+import boto3
+from fastapi import APIRouter, status
+from psycopg_pool import ConnectionPool
+
+from bdi_api.s7.s7_funcs import S7
+from bdi_api.settings import DBCredentials, Settings
 
 settings = Settings()
 db_credentials = DBCredentials()
@@ -40,7 +40,7 @@ def prepare_data() -> str:
 
     Use credentials passed from `db_credentials`
     """
-    
+
     s3 = boto3.client('s3')
     bucket_name = settings.s3_bucket
     s3_prefix_path = "raw/day=20231101/"
@@ -51,12 +51,12 @@ def prepare_data() -> str:
     S7.create_aircraft_table(pool)
 
     # set to 20 to match the pool size, never having more than threads than connections
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor: 
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         executor.map(
         functools.partial(S7.insert_data_into_database, s3, bucket_name, pool),
         files
     )
-        
+
     S7.create_aircraft_stats_view(pool)
 
     return "OK"
@@ -69,7 +69,7 @@ def list_aircraft(num_results: int = 100, page: int = 0) -> list[dict]:
 
     Use credentials passed from `db_credentials`
     """
-    
+
     with pool.connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -91,7 +91,7 @@ def get_aircraft_position(icao: str, num_results: int = 1000, page: int = 0) -> 
 
     Use credentials passed from `db_credentials`
     """
-    
+
     with pool.connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -115,7 +115,7 @@ def get_aircraft_statistics(icao: str) -> dict:
     """Returns different statistics about the aircraft
 
     * max_altitude_baro
-    * max_ground_speed  
+    * max_ground_speed
     * had_emergency
 
     FROM THE DATABASE
@@ -126,7 +126,7 @@ def get_aircraft_statistics(icao: str) -> dict:
     with pool.connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("""
-                SELECT 
+                SELECT
                     max_altitude_baro,
                     max_ground_speed,
                     had_emergency
@@ -135,7 +135,7 @@ def get_aircraft_statistics(icao: str) -> dict:
             """, (icao,))
             result = cursor.fetchone()
 
-    if result == None:
+    if result is None:
         return {}
     return {
         "max_altitude_baro": result[0],
